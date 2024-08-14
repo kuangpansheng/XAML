@@ -56,7 +56,7 @@ namespace XAML解析
             }
             if (Xaml序列化.创建副本(测试对象A.哈希表) is HashSet<测试节点> 哈希表)
             {
-                
+
             }
             if (Xaml序列化.创建副本(测试对象A.哈希字典) is Dictionary<int, 测试节点> 哈希字典)
             {
@@ -79,18 +79,25 @@ namespace XAML解析
                 }
             }
 
-            循环引用测试 循环对象A = new 循环引用测试("A");
-            循环引用测试 循环对象B = new 循环引用测试("B");
-            循环对象A.引用 = 循环对象B;
-            循环对象B.引用 = 循环对象A;
-
-            if (Xaml序列化.创建副本(循环对象A) is 循环引用测试 引用副本)
+            List<循环引用测试> 集合A = [];
+            List<循环引用测试> 集合B = [];
+            for (int i = 0; i < 5; i++)
             {
-               
+                集合A.Add(new 循环引用测试($"A组[{i}]"));
+                集合B.Add(new 循环引用测试($"B组[{i}]"));
             }
+            for (int i = 0; i < 5; i++)
+            {
+                集合A[i].引用 = 集合B[i];
+                集合B[i].引用 = 集合A[i < 4 ? i + 1 : 0];
+            }
+            集合A[0].引用集合 = 集合B;
+            集合B[0].引用集合 = 集合A;
+            if (Xaml序列化.创建副本(集合A) is List<循环引用测试> 引用副本)
+            {
 
+            }
         }
-
     }
     public class 测试泛型<T>
     {
@@ -121,15 +128,16 @@ namespace XAML解析
     {
         public 循环引用测试()
         {
-         
+
         }
         public 循环引用测试(string 名称)
         {
             this.名称 = 名称;
         }
-
         public string 名称 { get; set; } = "";
         public 循环引用测试? 引用 { get; set; }
+
+        public List<循环引用测试>? 引用集合 { get; set; } = [];
     }
 
 }

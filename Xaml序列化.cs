@@ -14,6 +14,7 @@ namespace XAML解析
     /// </summary>
     public static partial class Xaml序列化
     {
+        static Dictionary<object, Xaml节点> 循环引用对象集合 = [];
         public static string 序列化(object 对象)
         {
             循环引用对象集合 = [];
@@ -24,10 +25,10 @@ namespace XAML解析
             }
             else
             {
+                循环引用对象集合 = [];
                 throw new Exception("错误");
             }
         }
-        static Dictionary<object, Xaml节点> 循环引用对象集合 = [];
         private static Xaml节点? 对象递归序列化Xaml(object 对象)
         {
             if (对象 == null) return null;
@@ -63,13 +64,15 @@ namespace XAML解析
                 {
                     string 序列化字符串 = (string)序列化方法.Invoke(null, [对象])!;
                     var 序列化节点 = Xaml解析器.解析字符串(序列化字符串)!.根节点.子级集合[0];//使用该方法进行序列化
-                    循环引用对象集合.Add(对象, 序列化节点);
+                    if (!循环引用对象集合.ContainsKey(对象)) 循环引用对象集合.Add(对象, 序列化节点);
                     return 序列化节点;
                 }
             }
             if (对象 is IDictionary 哈希表)
             {
                 var 字典节点 = new Xaml节点(对象类型.序列化类型());
+                if (!循环引用对象集合.ContainsKey(对象)) 循环引用对象集合.Add(对象, 字典节点);
+
                 Type[] 泛型元素类型 = 对象类型.GetGenericArguments();
                 var 键节点 = new Xaml节点(泛型元素类型[0].序列化类型());
                 foreach (var Key in 哈希表.Keys)
@@ -85,24 +88,25 @@ namespace XAML解析
                 }
                 字典节点.子级集合.Add(键节点);
                 字典节点.子级集合.Add(值节点);
-                循环引用对象集合.Add(对象, 字典节点);
                 return 字典节点;
             }
             else if (对象 is IEnumerable 遍历对象) // 对象是数组
             {
                 var 数组节点 = new Xaml节点(对象类型.序列化类型());
+                if (!循环引用对象集合.ContainsKey(对象)) 循环引用对象集合.Add(对象, 数组节点);
+
                 foreach (var 元素 in 遍历对象)
                 {
                     if (对象递归序列化Xaml(元素) is Xaml节点 子级节点)
                         数组节点.子级集合.Add(子级节点);
                 }
-                循环引用对象集合.Add(对象, 数组节点);
                 return 数组节点;
             }
             else  //开始序列化属性
             {
                 Xaml节点 新节点 = new Xaml节点(对象类型.序列化类型()!);
-                循环引用对象集合.Add(对象, 新节点);
+                if (!循环引用对象集合.ContainsKey(对象)) 循环引用对象集合.Add(对象, 新节点);
+
                 var 对象属性集合 = 对象类型.GetProperties(BindingFlags.Instance | BindingFlags.Public);//获取所有属性,但不包括静态属性
                 HashSet<string>? 序列化指定属性 = null;
                 if (是否包含特性方法(对象类型, typeof(Xaml序列化指定属性), out var Xaml序列化指定属性, BindingFlags.Static | BindingFlags.Public))
@@ -159,7 +163,6 @@ namespace XAML解析
                     if (对象递归序列化Xaml(嵌套属性.Value) is Xaml节点 属性Xaml对象)
                         属性节点.子级集合.Add(属性Xaml对象);
                 }
-                循环引用对象集合.Remove(对象);
                 return 新节点;
             }
         }
@@ -219,6 +222,18 @@ namespace XAML解析
         static Dictionary<Guid, object?> 循环引用字典 = [];
 
         static List<Action> 循环引用赋值 = [];
+
+        public static object? 自定义类型实例化(Xaml节点 节点, Func<Type, object?>? 指定类型实例化, 属性实例化委托? 指定属性实例化)
+        {
+            循环引用赋值 = [];
+            循环引用字典 = [];
+            var 值 = 自定义类型实例化过程(节点, 指定类型实例化, 指定属性实例化);
+            foreach (var 循环引用 in 循环引用赋值)
+                循环引用.Invoke();
+            循环引用赋值 = [];
+            循环引用字典 = [];
+            return 值;
+        }
         /// <summary>
         /// 自定义实例化的过程
         /// </summary>
@@ -228,7 +243,7 @@ namespace XAML解析
         /// <param name="指定属性实例化">回调函数,由调用者判断属性是否应该实例化，返回True则需要，返回False则不实例化</param>
         /// <returns>返回实例化后的对象</returns>
         /// <exception cref="Exception">所有实例化的类必须拥有无参构造函数！</exception>
-        public static object? 自定义类型实例化(Xaml节点 节点, Func<Type, object?>? 指定类型实例化, 属性实例化委托? 指定属性实例化)
+        private static object? 自定义类型实例化过程(Xaml节点 节点, Func<Type, object?>? 指定类型实例化, 属性实例化委托? 指定属性实例化)
         {
             if (节点.名称 == "GUID")
             {
@@ -249,8 +264,7 @@ namespace XAML解析
             else if (Xaml序列化.是否包含特性方法(对象类型, typeof(Xaml实例化方法), out var 实例化方法, BindingFlags.Static | BindingFlags.Public))//判断该类是否有静态的实例化方法
             {
                 var 实例化值 = 实例化方法!.Invoke(null, [节点]);
-                if (节点.属性集合.ContainsKey("GUID"))
-                    循环引用字典.Add(Guid.Parse(节点.属性集合["GUID"]), 实例化值);
+                if (节点.属性集合.ContainsKey("GUID")) 循环引用字典.Add(Guid.Parse(节点.属性集合["GUID"]), 实例化值);
                 return 实例化值;
             }
             else
@@ -265,29 +279,29 @@ namespace XAML解析
                     if (泛型类型 == typeof(Dictionary<,>))
                     {
                         var 字典实例 = 创建类型对象(对象类型);
+                        if (节点.属性集合.ContainsKey("GUID")) 循环引用字典.Add(Guid.Parse(节点.属性集合["GUID"]), 字典实例);
+
                         var Add方法 = 对象类型.GetMethod("Add")!;
                         for (int i = 0; i < 节点.子级集合[0].子级集合.Count; i++)
                         {
-                            var 键 = 自定义类型实例化(节点.子级集合[0].子级集合[i], 指定类型实例化, 指定属性实例化);
-                            var 值 = 自定义类型实例化(节点.子级集合[1].子级集合[i], 指定类型实例化, 指定属性实例化);
+                            var 键 = 自定义类型实例化过程(节点.子级集合[0].子级集合[i], 指定类型实例化, 指定属性实例化);
+                            var 值 = 自定义类型实例化过程(节点.子级集合[1].子级集合[i], 指定类型实例化, 指定属性实例化);
                             Add方法.Invoke(字典实例, [键, 值]);
                         }
-                        if (节点.属性集合.ContainsKey("GUID"))
-                            循环引用字典.Add(Guid.Parse(节点.属性集合["GUID"]), 字典实例);
                         return 字典实例;
                     }
                     else if (泛型类型 == typeof(HashSet<>) || 泛型类型 == typeof(List<>))//例如哈希表
                     {
                         object 对象实例 = 创建类型对象(对象类型);
+                        if (节点.属性集合.ContainsKey("GUID")) 循环引用字典.Add(Guid.Parse(节点.属性集合["GUID"]), 对象实例);
+
                         if (对象实例.GetType().GetMethod("Add") is MethodInfo Add方法)
                         {
                             for (int i = 0; i < 节点.子级集合.Count; i++)
                             {
-                                var 元素 = 自定义类型实例化(节点.子级集合[i], 指定类型实例化, 指定属性实例化);
+                                var 元素 = 自定义类型实例化过程(节点.子级集合[i], 指定类型实例化, 指定属性实例化);
                                 Add方法.Invoke(对象实例, [元素]);
                             }
-                            if (节点.属性集合.ContainsKey("GUID"))
-                                循环引用字典.Add(Guid.Parse(节点.属性集合["GUID"]), 对象实例);
                             return 对象实例;
                         }
                         else
@@ -300,18 +314,20 @@ namespace XAML解析
                 {
                     var 数组元素类型 = 对象类型.GetElementType()!;
                     Array 数组 = Array.CreateInstance(数组元素类型, 节点.子级集合.Count);
+                    if (节点.属性集合.ContainsKey("GUID")) 循环引用字典.Add(Guid.Parse(节点.属性集合["GUID"]), 数组);
                     for (int i = 0; i < 节点.子级集合.Count; i++)
                     {
-                        var 数组元素值 = 自定义类型实例化(节点.子级集合[i], 指定类型实例化, 指定属性实例化);
+                        var 数组元素值 = 自定义类型实例化过程(节点.子级集合[i], 指定类型实例化, 指定属性实例化);
                         数组.SetValue(数组元素值, i);
                     }
-                    if (节点.属性集合.ContainsKey("GUID"))
-                        循环引用字典.Add(Guid.Parse(节点.属性集合["GUID"]), 数组);
                     return 数组;
                 }
                 if (对象类型.GetConstructor(Type.EmptyTypes) == null) //该类型没有无参构造函数，返回null
                     throw new Exception($"该类型[{对象类型.Name}]没有无参构造函数！");
                 var 新对象 = Activator.CreateInstance(对象类型);//使用反射实例化类
+                if (节点.属性集合.ContainsKey("GUID"))
+                    循环引用字典.Add(Guid.Parse(节点.属性集合["GUID"]), 新对象);
+
                 Dictionary<string, (PropertyInfo 属性, int 顺序)> 属性关联集合 = [];
                 foreach (PropertyInfo 属性 in 对象类型.GetProperties(BindingFlags.Instance | BindingFlags.Public))
                 {
@@ -330,10 +346,9 @@ namespace XAML解析
                     {
                         var 属性 = 属性关联集合[嵌套属性.名称].属性;
                         var 顺序 = 属性关联集合[嵌套属性.名称].顺序;
-
                         Action 实例化委托 = () =>
                         {
-                            var 值 = 自定义类型实例化(嵌套属性.子级集合[0], 指定类型实例化, 指定属性实例化);
+                            var 值 = 自定义类型实例化过程(嵌套属性.子级集合[0], 指定类型实例化, 指定属性实例化);
                             属性.SetValue(新对象, 值);
                         };
                         实例化委托集合.Add((实例化委托, 嵌套属性.名称, 顺序));
@@ -386,8 +401,7 @@ namespace XAML解析
                 foreach (var 实例化委托 in 实例化委托集合)
                     实例化委托.实例化委托.Invoke();
 
-                if (节点.属性集合.ContainsKey("GUID"))
-                    循环引用字典.Add(Guid.Parse(节点.属性集合["GUID"]), 新对象);
+
                 return 新对象;
             }
         }
